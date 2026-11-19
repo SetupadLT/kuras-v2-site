@@ -1,0 +1,56 @@
+name: Sync validated public site
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Run after the source data checks. GitHub schedules are best-effort.
+    - cron: '7,37 * * * *'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sync-public-site
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the public site repository
+        uses: actions/checkout@v4
+        with:
+          path: published
+          fetch-depth: 0
+
+      - name: Check out the public source snapshot
+        uses: actions/checkout@v4
+        with:
+          repository: SetupadLT/kuras-v2
+          ref: main
+          path: source
+          persist-credentials: false
+          sparse-checkout: static
+
+      - name: Validate the committed snapshot
+        run: |
+          test -s source/static/index.html
+          test -s source/static/data/current.json
+          test -s source/static/data/current.js
+          test -s source/static/data/status.json
+          jq -e 'type == "object"' source/static/data/current.json >/dev/null
+
+      - name: Publish only browser-facing files
+        run: |
+          rsync -a --delete \
+            --exclude='.git/' \
+            --exclude='.github/' \
+            --exclude='.nojekyll' \
+            --exclude='CNAME' \
+            source/static/ published/
+          touch published/.nojekyll
+          git -C published config user.name 'kuras-data-bot'
+          git -C published config user.email 'kuras-data-bot@users.noreply.github.com'
+          git -C published add -A
+          git -C published diff --cached --quiet || git -C published commit -m "Sync latest validated public site"
+          git -C published push
